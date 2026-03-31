@@ -99,7 +99,7 @@ const todayStr = () => { const d = new Date(); return mkDs(d.getFullYear(), d.ge
 const FB_URL = "https://cafe-shift-default-rtdb.asia-southeast1.firebasedatabase.app";
 
 // テストモード: true=テスト用DB、false=本番DB
-let _testMode = false;
+let _testMode = (typeof sessionStorage !== "undefined" && sessionStorage.getItem("cafeTestMode") === "1");
 function fbPath(key) {
   return `${FB_URL}/${_testMode ? "cafeshift_test" : "cafeshift"}/${key}.json`;
 }
@@ -272,7 +272,7 @@ export default function App() {
   const [user, setUser]           = useState(null);
   const [setupSummary, setSetupSummary] = useState(null); // {pin,question,answer} — shown once after first setup
   // テストモード: sessionStorageで保持（ログアウトしても消えない）
-  const [testMode, setTestMode] = useState(() => sessionStorage.getItem("cafeTestMode") === "1");
+  const [testMode, setTestMode] = useState(_testMode);
   useEffect(() => {
     sessionStorage.setItem("cafeTestMode", testMode ? "1" : "0");
     _testMode = testMode;
@@ -371,9 +371,9 @@ export default function App() {
     </div>
   );
 
-  if (view === "login")     return <Login staff={staff} onLogin={loginDone} />;
+  if (view === "login")     return <Login staff={staff} onLogin={loginDone} testMode={testMode} setTestMode={setTestMode}/>;
   if (view === "setupDone") return <SetupDoneScreen user={user} summary={setupSummary} onOk={()=>{ setSetupSummary(null); setView("choose"); }} />;
-  if (view === "choose")    return <ChooseAction user={user} onShift={()=>setView("staff")} onLogout={logout} />;
+  if (view === "choose")    return <ChooseAction user={user} onShift={()=>setView("staff")} onLogout={logout} testMode={testMode}/>;
   if (view === "staff")     return <StaffApp user={user} ctx={ctx} />;
   if (view === "admin")     return <AdminApp ctx={ctx} />;
 }
@@ -381,7 +381,7 @@ export default function App() {
 /* ═══════════════════════════════════════════════
    LOGIN  — steps: select | setup | pin | change | recovery | recoverNew | adminUnlock
 ═══════════════════════════════════════════════ */
-function Login({ staff, onLogin }) {
+function Login({ staff, onLogin, testMode=false, setTestMode=()=>{} }) {
   const [step,    setStep]   = useState("select");
   const [chosen,  setChosen] = useState(null);
   const [isAdmin, setIsAdmin]= useState(false);
