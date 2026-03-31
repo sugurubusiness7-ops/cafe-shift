@@ -163,8 +163,15 @@ setInterval(async () => {
       const serialized = JSON.stringify(data);
       if (serialized !== _lastVal[key]) {
         _lastVal[key] = serialized;
-        // notify all listeners for this key
         if (_setterMap && _setterMap[key]) _setterMap[key].forEach(fn => fn(data));
+        // 通知データ更新時：新着通知をブラウザ通知として表示
+        if (key === "notifs" && Array.isArray(data)) {
+          const uid = window._cafeCurrentUserId;
+          if (uid !== undefined) {
+            data.filter(n => String(n.to)===String(uid) && !n.read && !_shownNotifIds.has(n.id))
+              .forEach(n => { _shownNotifIds.add(n.id); showBrowserNotif("☕ Café Shift", n.text||"新しい通知があります"); });
+          }
+        }
       }
     } catch {}
   }
@@ -219,6 +226,12 @@ export default function App() {
     let vp = document.querySelector('meta[name="viewport"]');
     if (!vp) { vp = document.createElement("meta"); vp.name = "viewport"; document.head.appendChild(vp); }
     vp.content = "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no";
+    const addMeta=(n,c)=>{if(!document.querySelector(`meta[name="${n}"]`)){const m=document.createElement("meta");m.name=n;m.content=c;document.head.appendChild(m);}};
+    addMeta("apple-mobile-web-app-capable","yes");
+    addMeta("apple-mobile-web-app-status-bar-style","black-translucent");
+    addMeta("apple-mobile-web-app-title","Café Shift");
+    addMeta("mobile-web-app-capable","yes");
+    addMeta("theme-color","#2C1810");
 
     // Global CSS reset to prevent layout drift
     const style = document.createElement("style");
@@ -289,6 +302,12 @@ export default function App() {
   function nextM() { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
 
   function loginDone(u) {
+    // ブラウザ通知の許可リクエスト
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().then(perm => {
+        if (perm === "granted") showBrowserNotif("☕ Café Shift", "通知が有効になりました！");
+      });
+    }
     if (u.__selfRegister) {
       // Brand new user self-registration: add to staff list then setup
       const newId = staff.length > 0 ? Math.max(...staff.map(s=>s.id)) + 1 : 1;
@@ -332,10 +351,11 @@ export default function App() {
       return;
     }
     setUser(u);
+    window._cafeCurrentUserId = u.id;
     if (u.role === "admin") setView("admin");
     else setView("choose");
   }
-  function logout() { setUser(null); setView("login"); }
+  function logout() { setUser(null); window._cafeCurrentUserId = undefined; setView("login"); }
 
   const ctx = {
     staff, setStaff, nightDays, setNightDays,
@@ -1148,9 +1168,19 @@ function StaffApp({ user, ctx }) {
 
 /* ─── Staff Calendar & Submission ─── */
 function StaffCalendar({ user, ctx }) {
-  const { nightDays, shifts, setShifts, deadlines, extensions, year, month, monthKey } = ctx;
+  const { nightDays, shifts, setShifts, confirmed, deadlines, extensions, year, month, monthKey } = ctx;
   const myShifts   = shifts[monthKey]?.[String(user.id)] || {};
   const submitted  = Object.values(myShifts).some(v => v._submitted);
+  // 確定済み日を収集
+  const myConfirmedDates = Object.entries(confirmed[monthKey]||{}).reduce((acc,[ds,sess])=>{
+    const hasDay   = sess.day?.find(e=>String(e.staffId)===String(user.id));
+    const hasNight = sess.night?.find(e=>String(e.staffId)===String(user.id));
+    if(hasDay)   acc[ds+"_day"]   = hasDay;
+    if(hasNight) acc[ds+"_night"] = hasNight;
+    return acc;
+  },{});
+  const confirmedDayCount = new Set(Object.keys(myConfirmedDates).map(k=>k.split("_")[0])).size;
+  const hasConfirmed = confirmedDayCount > 0;
   const [draft, setDraft] = useState({});
   const [sel,   setSel]   = useState(null); // {dateStr,session}
   const deadline       = deadlines[monthKey];
@@ -1244,19 +1274,47 @@ function StaffCalendar({ user, ctx }) {
         </div>
       )}
 
-      {submitted && (
+      {/* ステータスバナー：提出前/提出済み/確定済み */}
+      {!submitted && (
+        <div style={{margin:"0 16px 12px",padding:"10px 14px",borderRadius:12,
+          background:"#F8F9FA",border:`1px solid ${C.latte}`,
+          display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:16}}>📋</span>
+          <span style={{flex:1,color:C.g500,fontSize:13,fontFamily:SANS}}>シフト希望を入力して提出してください</span>
+        </div>
+      )}
+      {submitted && !hasConfirmed && (
+        <div style={{margin:"0 16px 12px",padding:"11px 16px",borderRadius:12,
+          background:C.amberBg,border:`1px solid ${C.amberLight}`,
+          display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:18}}>⏳</span>
+          <div style={{flex:1}}>
+            <div style={{color:C.amber,fontWeight:700,fontSize:13,fontFamily:SANS}}>提出済み（確定待ち）</div>
+            <div style={{color:C.amber,fontSize:11,fontFamily:SANS,marginTop:1}}>管理者がシフトを確定するまでお待ちください</div>
+          </div>
+          {(!pastDeadline || hasExtension) && (
+            <Btn variant="outline" onClick={resetSubmit}
+              style={{fontSize:11,padding:"4px 10px",borderColor:C.amber,color:C.amber}}>
+              ✏️ 修正
+            </Btn>
+          )}
+        </div>
+      )}
+      {hasConfirmed && (
         <div style={{margin:"0 16px 12px",padding:"11px 16px",borderRadius:12,
           background:C.greenBg,border:`1px solid ${C.greenLight}`,
           display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:18}}>✅</span>
-          <span style={{flex:1,color:C.green,fontWeight:600,fontSize:13,fontFamily:SANS}}>提出済み</span>
-          {/* 期限前 or 延長許可なら修正可 */}
-          {(!pastDeadline || hasExtension) && (
+          <div style={{flex:1}}>
+            <div style={{color:C.green,fontWeight:700,fontSize:13,fontFamily:SANS}}>確定済み（{confirmedDayCount}日）</div>
+            <div style={{color:C.green,fontSize:11,fontFamily:SANS,marginTop:1}}>
+              {submitted && !hasConfirmed ? "一部未確定あり" : "シフトが確定しました"}
+            </div>
+          </div>
+          {(!pastDeadline || hasExtension) && submitted && (
             <Btn variant="outline" onClick={resetSubmit}
-              style={{fontSize:12,padding:"4px 12px",
-                borderColor:hasExtension?C.amber:C.green,
-                color:hasExtension?C.amber:C.green}}>
-              ✏️ 修正する
+              style={{fontSize:11,padding:"4px 10px",borderColor:C.green,color:C.green}}>
+              ✏️ 修正
             </Btn>
           )}
         </div>
@@ -1279,21 +1337,26 @@ function StaffCalendar({ user, ctx }) {
             const isSelN = sel?.dateStr===dateStr && sel?.session==="night";
             const dc = timeColor(cv.day?.start||"");
             const nc = cv.night && timeColor(cv.night?.start||"");
-            // 期限前または延長許可があれば編集可
             const locked = submitted && (pastDeadline && !hasExtension);
+            // 確定済みかどうかチェック
+            const confDay   = myConfirmedDates[dateStr+"_day"];
+            const confNight = myConfirmedDates[dateStr+"_night"];
             return (
               <div key={dateStr} style={{display:"flex",flexDirection:"column",gap:2}}>
                 <button onClick={() => toggleSession(dateStr,"day")} style={{
                   width:"100%",aspectRatio:"1",borderRadius:8,display:"flex",flexDirection:"column",
                   alignItems:"center",justifyContent:"center",gap:1,
-                  background:cv.day?dc.bg:"#fff",
-                  border:isSelD?`2px solid ${dc.color}`:cv.day?`1.5px solid ${dc.color}60`:"1px solid #EDE5D8",
+                  background:confDay?C.greenBg:cv.day?dc.bg:"#fff",
+                  border:isSelD?`2px solid ${confDay?C.green:dc.color}`:
+                    confDay?`2px solid ${C.green}`:
+                    cv.day?`1.5px solid ${dc.color}60`:"1px solid #EDE5D8",
                   cursor:locked?"not-allowed":"pointer",fontFamily:SANS,
                   color:dow===0?C.red:dow===6?C.nightAcc:C.espresso,
                 }}>
-                  <span style={{fontSize:12,fontWeight:cv.day?700:400}}>{d}</span>
-                  {cv.day && <span style={{fontSize:8,color:dc.color,fontWeight:800,lineHeight:1}}>
-                    {isSentinel(cv.day.start)?cv.day.start:cv.day.start}
+                  <span style={{fontSize:12,fontWeight:(cv.day||confDay)?700:400}}>{d}</span>
+                  {confDay && <span style={{fontSize:7,color:C.green,fontWeight:800,lineHeight:1}}>確定</span>}
+                  {!confDay && cv.day && <span style={{fontSize:8,color:dc.color,fontWeight:800,lineHeight:1}}>
+                    {cv.day.start}
                   </span>}
                 </button>
                 {hasNight && (
@@ -1547,8 +1610,15 @@ function AdminApp({ ctx }) {
 
 /* ─── Admin Overview ─── */
 function AdminOverview({ ctx }) {
-  const { staff, shifts, deadlines, extensions, setExtensions, messages, year, month, monthKey, prevM, nextM } = ctx;
+  const { staff, shifts, confirmed, deadlines, extensions, setExtensions, messages, year, month, monthKey, prevM, nextM } = ctx;
   const subCount = staff.filter(s => { const ms=shifts[monthKey]?.[String(s.id)]||{}; return Object.values(ms).some(v=>v._submitted||v.day||v.night); }).length;
+  const confCount = staff.filter(s => {
+    const mConf = confirmed[monthKey]||{};
+    return Object.values(mConf).some(sess=>
+      sess.day?.find(e=>String(e.staffId)===String(s.id)) ||
+      sess.night?.find(e=>String(e.staffId)===String(s.id))
+    );
+  }).length;
   const deadline = deadlines[monthKey];
   const today = todayStr();
 
@@ -1563,12 +1633,12 @@ function AdminOverview({ ctx }) {
           {today>deadline?"🔒 提出期限終了："+fmtDs(deadline):"📅 提出期限："+fmtDs(deadline)}
         </div>
       )}
-      <div style={{display:"flex",gap:10,padding:"0 16px 14px"}}>
-        {[["総スタッフ",staff.length,C.espresso],["提出済み",subCount,C.green],["未提出",staff.length-subCount,C.amber]].map(([l,v,col]) => (
-          <div key={l} style={{flex:1,background:"#fff",borderRadius:14,padding:"14px 8px",textAlign:"center",
+      <div style={{display:"flex",gap:8,padding:"0 16px 14px"}}>
+        {[["総スタッフ",staff.length,C.espresso],["提出済み",subCount,C.amber],["確定済み",confCount,C.green],["未提出",staff.length-subCount,C.red]].map(([l,v,col]) => (
+          <div key={l} style={{flex:1,background:"#fff",borderRadius:12,padding:"12px 4px",textAlign:"center",
             boxShadow:"0 2px 8px rgba(44,24,16,0.06)",border:`1px solid ${C.latte}`}}>
-            <div style={{fontFamily:SERIF,fontSize:26,color:col}}>{v}</div>
-            <div style={{fontSize:11,color:C.g400,fontFamily:SANS,marginTop:2}}>{l}</div>
+            <div style={{fontFamily:SERIF,fontSize:22,color:col}}>{v}</div>
+            <div style={{fontSize:10,color:C.g400,fontFamily:SANS,marginTop:2}}>{l}</div>
           </div>
         ))}
       </div>
@@ -1592,27 +1662,66 @@ function AdminOverview({ ctx }) {
                   {hasExt && <span style={{fontSize:10,background:C.amberBg,color:C.amber,
                     borderRadius:6,padding:"1px 6px",border:`1px solid ${C.amberLight}`,fontFamily:SANS}}>延長許可中</span>}
                 </div>
-                <div style={{fontSize:12,color:isSub?C.green:C.amber,fontFamily:SANS,marginTop:2,fontWeight:500}}>
-                  {isSub?`✅ 提出済み（${dc}日）`:"⏳ 未提出"}
-                </div>
+                {(()=>{
+                  const mConf=confirmed[monthKey]||{};
+                  const confDays=new Set(Object.entries(mConf).filter(([,sess])=>
+                    sess.day?.find(e=>String(e.staffId)===String(s.id))||
+                    sess.night?.find(e=>String(e.staffId)===String(s.id))
+                  ).map(([ds])=>ds));
+                  const cd=confDays.size;
+                  return(
+                    <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2,flexWrap:"wrap"}}>
+                      {isSub&&<span style={{fontSize:11,color:C.amber,fontFamily:SANS,fontWeight:600}}>
+                        ⏳ 提出済み（{dc}日）
+                      </span>}
+                      {!isSub&&<span style={{fontSize:11,color:C.g400,fontFamily:SANS}}>⏸ 未提出</span>}
+                      {cd>0&&<span style={{fontSize:11,color:C.green,fontFamily:SANS,fontWeight:700}}>
+                        ✅ 確定（{cd}日）
+                      </span>}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
-            {dc>0 && (
-              <div style={{padding:"0 16px 12px",display:"flex",flexWrap:"wrap",gap:5}}>
-                {Object.entries(ms).sort(([a],[b])=>a.localeCompare(b)).flatMap(([k,v]) => {
-                  const chips = [];
-                  if (v.day) {
-                    const tc = timeColor(v.day.start||"");
-                    chips.push(<Chip key={k+"d"} color={tc.color} bg={tc.bg}>☀️ {k.slice(5)} {shiftLabel(v.day)}</Chip>);
-                  }
-                  if (v.night) {
-                    const tc = timeColor(v.night.start||"");
-                    chips.push(<Chip key={k+"n"} color="#A5B4FC" bg="#1A1F3A22">🌙 {k.slice(5)} {shiftLabel(v.night)}</Chip>);
-                  }
-                  return chips;
-                })}
-              </div>
-            )}
+            {(()=>{
+              const mConf=confirmed[monthKey]||{};
+              const confEntries=Object.entries(mConf).filter(([,sess])=>
+                sess.day?.find(e=>String(e.staffId)===String(s.id))||
+                sess.night?.find(e=>String(e.staffId)===String(s.id))
+              ).sort(([a],[b])=>a.localeCompare(b));
+              return(
+                <>
+                {dc>0&&(
+                  <div style={{padding:"0 16px 6px"}}>
+                    <div style={{fontSize:10,color:C.amber,fontFamily:SANS,marginBottom:4,fontWeight:700}}>⏳ 提出済みシフト</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {Object.entries(ms).sort(([a],[b])=>a.localeCompare(b)).flatMap(([k,v])=>{
+                        const chips=[];
+                        if(v.day){const tc=timeColor(v.day.start||"");chips.push(<Chip key={k+"d"} color={tc.color} bg={tc.bg}>☀️ {k.slice(5)} {shiftLabel(v.day)}</Chip>);}
+                        if(v.night)chips.push(<Chip key={k+"n"} color="#A5B4FC" bg="#1A1F3A22">🌙 {k.slice(5)}</Chip>);
+                        return chips;
+                      })}
+                    </div>
+                  </div>
+                )}
+                {confEntries.length>0&&(
+                  <div style={{padding:"0 16px 10px"}}>
+                    <div style={{fontSize:10,color:C.green,fontFamily:SANS,marginBottom:4,fontWeight:700}}>✅ 確定済みシフト</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {confEntries.flatMap(([ds,sess])=>{
+                        const chips=[];
+                        const de=sess.day?.find(e=>String(e.staffId)===String(s.id));
+                        const ne=sess.night?.find(e=>String(e.staffId)===String(s.id));
+                        if(de)chips.push(<Chip key={ds+"cd"} color={C.green} bg={C.greenBg}>☀️ {ds.slice(5)} {shiftLabel(de)}</Chip>);
+                        if(ne)chips.push(<Chip key={ds+"cn"} color="#10B981" bg="#ECFDF5">🌙 {ds.slice(5)}</Chip>);
+                        return chips;
+                      })}
+                    </div>
+                  </div>
+                )}
+                </>
+              );
+            })()}
             {!isSub && deadline && (
               <div style={{padding:"0 16px 12px",display:"flex",gap:8}}>
                 {hasExt
@@ -2046,6 +2155,20 @@ function ConfirmedView({ ctx, staffView, userId }) {
   return (
     <div style={{paddingBottom:40}}>
       <MonthNav year={year} month={month} onPrev={prevM} onNext={nextM}/>
+      <div style={{margin:"0 16px 10px",padding:"10px 16px",borderRadius:12,
+        background:`linear-gradient(135deg,${C.green}18,${C.greenBg})`,
+        border:`1px solid ${C.greenLight}`,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:20}}>✅</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,color:C.green,fontFamily:SANS,fontSize:14}}>確定シフト</div>
+          <div style={{fontSize:11,color:C.green,fontFamily:SANS,marginTop:1,opacity:0.8}}>
+            {staffView?"管理者が確定したシフトです":"スタッフの確定済みシフト一覧"}
+          </div>
+        </div>
+        <div style={{fontFamily:SERIF,fontSize:18,color:C.green,fontWeight:700}}>
+          {Object.keys(mConf).length}日
+        </div>
+      </div>
       {Object.keys(mConf).length===0 && (
         <div style={{padding:"40px 16px",textAlign:"center"}}>
           <div style={{fontSize:40,marginBottom:12}}>📋</div>
