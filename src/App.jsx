@@ -271,11 +271,13 @@ export default function App() {
   const [view, setView]           = useState("login");
   const [user, setUser]           = useState(null);
   const [setupSummary, setSetupSummary] = useState(null); // {pin,question,answer} — shown once after first setup
-  const [testMode, setTestMode]   = useState(false); // テストモード
+  // テストモード: sessionStorageで保持（ログアウトしても消えない）
+  const [testMode, setTestMode] = useState(() => sessionStorage.getItem("cafeTestMode") === "1");
+  useEffect(() => {
+    sessionStorage.setItem("cafeTestMode", testMode ? "1" : "0");
+    _testMode = testMode;
+  }, [testMode]);
   const monthKey = `${year}-${String(month+1).padStart(2,"0")}`;
-
-  // テストモード切替時にFirebaseのパスを同期
-  useEffect(() => { _testMode = testMode; }, [testMode]);
 
   // Mark app as ready after initial load (≈1s for storage reads)
   useEffect(() => {
@@ -796,6 +798,30 @@ function Login({ staff, onLogin }) {
           </>)}
         </>)}
 
+      {/* ── テストモード切替（全ステップ共通・常時表示） ── */}
+      <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.latte}`}}>
+        <button onClick={()=>setTestMode(!testMode)}
+          style={{width:"100%",padding:"11px",borderRadius:10,cursor:"pointer",fontFamily:SANS,
+            fontSize:13,fontWeight:700,
+            border:`2px solid ${testMode?"#F97316":"#D1D5DB"}`,
+            background:testMode?"#FFF7ED":"transparent",
+            color:testMode?"#F97316":"#9CA3AF",
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          🧪 テストモード
+          <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,
+            background:testMode?"#F97316":"#E5E7EB",
+            color:testMode?"#fff":"#6B7280",fontWeight:700}}>
+            {testMode?"ON":"OFF"}
+          </span>
+        </button>
+        {testMode&&(
+          <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"#FFF7ED",
+            border:"1px solid #FED7AA",fontSize:12,color:"#9A3412",fontFamily:SANS,textAlign:"center"}}>
+            ⚠️ テストモード中 — 本番データに影響しません
+          </div>
+        )}
+      </div>
+
       </div>
     </div>
   );
@@ -896,7 +922,7 @@ function SetupDoneScreen({ user, summary, onOk }) {
 /* ═══════════════════════════════════════════════
    CHOOSE ACTION  (after staff login)
 ═══════════════════════════════════════════════ */
-function ChooseAction({ user, onShift, onLogout }) {
+function ChooseAction({ user, onShift, onLogout, testMode }) {
   const si = INIT_STAFF.findIndex(s => s.id === user.id); // approximate index for color
 
   return (
@@ -906,6 +932,12 @@ function ChooseAction({ user, onShift, onLogout }) {
       <div style={{background:"rgba(250,246,241,0.97)",borderRadius:24,padding:"32px 24px",
         width:"100%",maxWidth:400,boxShadow:"0 32px 80px rgba(0,0,0,0.45)",
         maxHeight:"calc(100vh - 32px)",overflowY:"auto"}}>
+        {testMode && (
+          <div style={{background:"#FFF7ED",borderRadius:10,padding:"8px 12px",marginBottom:16,
+            border:"1px solid #F97316",textAlign:"center",fontSize:12,color:"#F97316",fontFamily:SANS,fontWeight:700}}>
+            🧪 テストモード中 — 本番データに影響しません
+          </div>
+        )}
         <div style={{textAlign:"center",marginBottom:28}}>
           <div style={{fontSize:44,lineHeight:1}}>☕</div>
           <div style={{fontFamily:SERIF,fontSize:22,color:C.espresso,marginTop:10}}>{user.name}</div>
